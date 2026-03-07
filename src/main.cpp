@@ -56,8 +56,8 @@ FilteredAnalog<12, 14, uint32_t, uint32_t> filterPB = pinPB;
 
 double PBwiggle = 0.050;
 double PBdeadzoneMultiplier = 2.50;
-double PBdeadzoneMinimum = 250;
-double PBdeadzoneMaximum = 500;
+double PBdeadzoneMinimum = 387;
+double PBdeadzoneMaximum = 539;
 double PBdeadzoneLowerShift = 0; 
 double PBdeadzoneUpperShift = 0;
 
@@ -66,7 +66,7 @@ double PBdeadzoneUpperShift = 0;
 //These are variables for managing the Pitch Bend values. Highs, lows, defaults, centers, etc.
 
 analog_t PBminimumValue = 0; analog_t PBminimumDefault = PBminimumValue; // These should be measured actual 14 bit values.
-analog_t PBmaximumValue = 16383; analog_t PBmaximumDefault = PBmaximumValue; // These should be measured actual 14 bit values.
+analog_t PBmaximumValue = 16384; analog_t PBmaximumDefault = PBmaximumValue; // These should be measured actual 14 bit values.
 analog_t PBcenter = ((PBmaximumValue-PBminimumValue)/2)+PBminimumValue; // default (rough) value
 analog_t PBdeadzone = PBdeadzoneMinimum; // default (rough) value -- this will be updated during setup
 analog_t PBminReading = PBminimumValue; analog_t PBmaxReading = PBmaximumValue; // for auto-ranging
@@ -269,4 +269,3 @@ void loop() {
 //=================================================================================
 //=================================================================================
 //=================================================================================
-
