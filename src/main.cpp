@@ -11,11 +11,10 @@
 
 //=================================================================================
 
-#include <Control_Surface.h> // I have the 2.0.0 installed -- I'm not currently using 2.1.0
-
 #include <Arduino.h>
-
+#include <Control_Surface.h> // I have the 2.0.0 installed -- I'm not currently using 2.1.0
 #include <AH/Hardware/MultiPurposeButton.hpp>
+#include "esp_sleep.h"
 
 //=================================================================================
 
@@ -33,10 +32,10 @@ int channelShift = 0; // 0 based, so 0 = midi channel 1
 //In this example code, we can output as BT MIDI, USB MIDI, and Serial MIDI (DIN-5) all at the same time.
 
 BluetoothMIDI_Interface btmidi; // output midi to bluetooth -- my test board doesn't have BT, so this is remarked out.
-//USBMIDI_Interface usbmidi; // output midi to usb
-//HardwareSerialMIDI_Interface serialmidi {Serial1, MIDI_BAUD}; // output to serial port for DIN-5 work.
+USBMIDI_Interface usbmidi; // output midi to usb
+HardwareSerialMIDI_Interface serialmidi {Serial1, MIDI_BAUD}; // output to serial port for DIN-5 work.
 
-MIDI_PipeFactory<2> pipes; // pipes allows you to output to multiple interfaces at the same time.
+MIDI_PipeFactory<3> pipes; // pipes allows you to output to multiple interfaces at the same time.
 //The <2> above indicates the number of interfaces. If you used all three, it would be 3.
 
 //This was very confusing for me for a while, but getting Bankable working is very helpful for runtime settings changes.
@@ -63,10 +62,19 @@ double PBdeadzoneUpperShift = 0;
 
 //=================================================================================
 
+//These are variables for managing the sleep/wake button. This is optional, but can be helpful for battery powered devices.
+// GPIO35 is an input-only pin, needs external 10k pull-up
+#define BUTTON_SLEEP_PIN GPIO_NUM_35 
+// GPIO0 is the BOOT button, typically active low (internally pulled high)
+#define BUTTON_WAKE_PIN  GPIO_NUM_0  
+
+//=================================================================================
+
+
 //These are variables for managing the Pitch Bend values. Highs, lows, defaults, centers, etc.
 
 analog_t PBminimumValue = 0; analog_t PBminimumDefault = PBminimumValue; // These should be measured actual 14 bit values.
-analog_t PBmaximumValue = 16384; analog_t PBmaximumDefault = PBmaximumValue; // These should be measured actual 14 bit values.
+analog_t PBmaximumValue = 16383; analog_t PBmaximumDefault = PBmaximumValue; // These should be measured actual 14 bit values.
 analog_t PBcenter = ((PBmaximumValue-PBminimumValue)/2)+PBminimumValue; // default (rough) value
 analog_t PBdeadzone = PBdeadzoneMinimum; // default (rough) value -- this will be updated during setup
 analog_t PBminReading = PBminimumValue; analog_t PBmaxReading = PBmaximumValue; // for auto-ranging
@@ -159,7 +167,7 @@ void calibrateCenterAndDeadzone() {
 void adjustPB() {
 
   //The 12 bit getValue is used only for the continous send on low and high. Otherwise, not needed.
-  uint32_t pbGetValue = potPB.getValue(); // This is a 12 bit value (0 to 1023)
+  uint32_t pbGetValue = potPB.getValue(); // This is a 12 bit value (0 to 4095)
 
   //We need to use the 14 bit full value provided by getRawValue to do the deadzone magic.
   uint32_t pbGetRawValue = potPB.getRawValue(); // This is a 14 bit value (0 to 16383)
@@ -181,7 +189,7 @@ void adjustPB() {
   }
 
   //continuous send on high -- OPTIONAL
-  if (pbGetValue==1023) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 16383); }
+  if (pbGetValue==8192) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 16383); }
 
 }//adjustPB
 
@@ -209,18 +217,28 @@ void debugPrint() {
 
 //=================================================================================
 
-
-
 void setup() {
 
-  btmidi.setName("Whammy"); //bt device name 
-
-  btmidi.setAsDefault();
-  
   //For debugging output
   Serial.begin(SERIAL_BAUDRATE); // this is the serial debug baud rate -- NOT MIDI
 
+  Serial.println("\nESP32 Awake");
 
+  // Configure Wake-up pin (GPIO0)
+  // Wake up when button is pressed (LOW)
+  esp_sleep_enable_ext0_wakeup(BUTTON_WAKE_PIN, 0); 
+  
+  // Configure Sleep button (GPIO35)
+  pinMode(BUTTON_SLEEP_PIN, INPUT);
+
+  // Check if wakeup reason is from deep sleep
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+    Serial.println("Woke up from GPIO0");
+  }
+
+  //Set the BT MIDI device name -- this is what will show up on your computer or phone when you go to connect to it.
+  btmidi.setName("TTGO_whammy"); //bt device name  
 
   //Setup Control_Surface filters
   FilteredAnalog<>::setupADC();
@@ -231,12 +249,13 @@ void setup() {
 
   // Manually connect the MIDI interfaces to Control Surface
   Control_Surface >> pipes >> btmidi; //  -- my test board doesn't have BT, so this is remarked out.
-  //Control_Surface >> pipes >> usbmidi;
+  Control_Surface >> pipes >> usbmidi;
   //Control_Surface >> pipes >> serialmidi; 
 
-  //Set USB MIDI as default
   //This is the fallback/default method. MIDI will be sent out of anything in the pipes (above)
-  //usbmidi.setAsDefault();
+  usbmidi.setAsDefault();
+  //btmidi.setAsDefault();
+
 
   //Startup MIDI Control Surface
   Control_Surface.begin();
@@ -258,14 +277,23 @@ void loop() {
 
   Control_Surface.loop();
 
+
   adjustPB(); // Handles re-centering
 
   debugPrint(); 
 
   yield(); delay(1); // helpful for chips with watchdog timers, short pause to allow other tasks to catch up
   
+   // Check if button on GPIO35 is pressed (LOW)
+  if (digitalRead(BUTTON_SLEEP_PIN) == LOW) {
+    Serial.println("Going to sleep...");
+    delay(100);
+    esp_deep_sleep_start();
+  }
+
 }//loop
 
 //=================================================================================
 //=================================================================================
 //=================================================================================
+
