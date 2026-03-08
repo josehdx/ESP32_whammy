@@ -10,11 +10,13 @@
 //             but all other libraries and board definitions are current.
 
 //=================================================================================
+#define CS_USE_NIMBLE // Use NimBLE instead of Bluedroid for BLE MIDI. NimBLE is more efficient and has better performance, but Bluedroid is more widely supported. If you have issues with one, try the other. Note that if you switch, you may need to change the backend class used in the BLEMIDI_Interface definition below (e.g. to ESP32BluedroidBackend for Bluedroid).
 
 #include <Arduino.h>
 #include <Control_Surface.h> // I have the 2.0.0 installed -- I'm not currently using 2.1.0
 #include <AH/Hardware/MultiPurposeButton.hpp>
 #include "esp_sleep.h"
+#include <NimBLEDevice.h>
 
 //=================================================================================
 
