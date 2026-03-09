@@ -1,3 +1,4 @@
+
 // 7MM_MIDI_EXAMPLE_JOSE_20260116
 // ron.nelson.ii@gmail.com
 // http://sevenmilemountain.etsy.com/
@@ -17,17 +18,25 @@
 #include <AH/Hardware/MultiPurposeButton.hpp>
 #include "esp_sleep.h"
 #include <NimBLEDevice.h>
-
+#include "esp_efuse.h"
+#include "esp_system.h"
+#include <SPI.h>
+#include <TFT_eSPI.h> // Hardware-specific library for TFT display (if you have one, otherwise you can remove this)
+#include <WiFi.h>
 //=================================================================================
 
-#define SERIAL_BAUDRATE       115200  // all the new boards can handle this speed
+#define SERIAL_BAUDRATE       31250  // all the new boards can handle this speed
 #define FORCE_CENTER_UPDATE_DELAY 250   // 0.25 seconds -- only force center updates every y secs (prevent overrun)
 
 //=================================================================================
 
-pin_t pinPB = A13; // yours is 15
+pin_t pinPB = A13; // your PB potentiometer pin -- this is the analog pin that your PB pot is connected to. On my board, this is A13, which is a 14 bit ADC pin. Check your board's pinout and documentation to find the right one for you. Note that some boards have multiple ADCs with different resolutions, so make sure to choose a pin that supports the resolution you want to work with (e.g. 12 bit, 14 bit, etc.).
 int channelShift = 0; // 0 based, so 0 = midi channel 1
 
+//=================================================================================
+TFT_eSPI tft = TFT_eSPI(); // If you have a TFT display, you can use this for debugging output. If not, you can remove all references to tft and the TFT_eSPI library.
+const int buttonPin = 0;          // GPIO0 is the right button on the T-Display
+const int backlightPin = TFT_BL;; // GPIO4 controls the screen backlight
 //=================================================================================
 
 //Control_Surface output interfaces 
@@ -38,7 +47,6 @@ USBMIDI_Interface usbmidi; // output midi to usb
 HardwareSerialMIDI_Interface serialmidi {Serial1, MIDI_BAUD}; // output to serial port for DIN-5 work.
 
 MIDI_PipeFactory<3> pipes; // pipes allows you to output to multiple interfaces at the same time.
-//The <2> above indicates the number of interfaces. If you used all three, it would be 3.
 
 //This was very confusing for me for a while, but getting Bankable working is very helpful for runtime settings changes.
 Bank<16> bankChannel; // Banking allows for runtime channel changes. This sample code doesn't use it, but can.
@@ -66,9 +74,8 @@ double PBdeadzoneUpperShift = 0;
 
 //These are variables for managing the sleep/wake button. This is optional, but can be helpful for battery powered devices.
 // GPIO35 is an input-only pin, needs external 10k pull-up
-#define BUTTON_SLEEP_PIN GPIO_NUM_35 
-// GPIO0 is the BOOT button, typically active low (internally pulled high)
-#define BUTTON_WAKE_PIN  GPIO_NUM_0  
+#define BUTTON_SLEEP_PIN GPIO_NUM_35 // GPIO35 is the SLEEP button, typically active low (externally pulled high)
+#define BUTTON_WAKE_PIN  GPIO_NUM_0  // GPIO0 is the BOOT button, typically active low (internally pulled high)
 
 //=================================================================================
 
@@ -200,7 +207,7 @@ void adjustPB() {
 void debugPrint() {
   //Optional -- if you want to check on what analogRead is really providing
   //The resolution (7, 10, 12, 14, 16) will depend on your MCUs ADC
-  Serial.print("AR: ");
+  Serial.print("AR: "); // This is the raw analogRead value -- on my board, this is 12 bit (0 to 4095)
   Serial.print(analogRead(pinPB)); Serial.print("\t");
   Serial.print("CS: "); // Channel Shift (channel # - 1)
   Serial.print(channelShift); Serial.print("\t");
@@ -220,8 +227,7 @@ void debugPrint() {
 //=================================================================================
 
 void setup() {
-
-  //For debugging output
+    //For debugging output
   Serial.begin(SERIAL_BAUDRATE); // this is the serial debug baud rate -- NOT MIDI
 
   Serial.println("\nESP32 Awake");
@@ -240,6 +246,7 @@ void setup() {
   }
 
   //Set the BT MIDI device name -- this is what will show up on your computer or phone when you go to connect to it.
+  
   btmidi.setName("TTGO_whammy"); //bt device name  
 
   //Setup Control_Surface filters
@@ -255,8 +262,8 @@ void setup() {
   //Control_Surface >> pipes >> serialmidi; 
 
   //This is the fallback/default method. MIDI will be sent out of anything in the pipes (above)
-  usbmidi.setAsDefault();
-  //btmidi.setAsDefault();
+  //usbmidi.setAsDefault();
+  btmidi.setAsDefault();
 
 
   //Startup MIDI Control Surface
@@ -268,6 +275,7 @@ void setup() {
 
   //Centering and deadzone are runtime only (no flash settings)
   calibrateCenterAndDeadzone();
+
 
 }//setup
 
@@ -289,13 +297,13 @@ void loop() {
    // Check if button on GPIO35 is pressed (LOW)
   if (digitalRead(BUTTON_SLEEP_PIN) == LOW) {
     Serial.println("Going to sleep...");
-    delay(100);
+    delay(10);
     esp_deep_sleep_start();
   }
+    
 
 }//loop
 
 //=================================================================================
 //=================================================================================
 //=================================================================================
-
