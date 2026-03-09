@@ -232,6 +232,22 @@ void setup() {
 
   Serial.println("\nESP32 Awake");
 
+  // Initialize TFT Screen
+    pinMode(backlightPin, OUTPUT);    // MUST set the backlight pin to output mode
+  digitalWrite(backlightPin, HIGH); // MUST pull the backlight pin HIGH to turn on the screen
+  
+  tft.init();
+  tft.setRotation(1); 
+  tft.fillScreen(TFT_WHITE); 
+  tft.setTextColor(TFT_BLACK); 
+  tft.setTextSize(2);
+  tft.setCursor(10, 10);
+  tft.println("Active");
+  
+
+    esp_sleep_enable_ext0_wakeup(BUTTON_WAKE_PIN, 0); 
+    pinMode(BUTTON_SLEEP_PIN, INPUT);
+
   // Configure Wake-up pin (GPIO0)
   // Wake up when button is pressed (LOW)
   esp_sleep_enable_ext0_wakeup(BUTTON_WAKE_PIN, 0); 
@@ -257,8 +273,8 @@ void setup() {
   potPB.map(map_PB); // pitch bend - non-inverted
 
   // Manually connect the MIDI interfaces to Control Surface
-  Control_Surface >> pipes >> btmidi; //  -- my test board doesn't have BT, so this is remarked out.
-  Control_Surface >> pipes >> usbmidi;
+  //Control_Surface >> pipes >> btmidi; //  -- my test board doesn't have BT, so this is remarked out.
+  //Control_Surface >> pipes >> usbmidi;
   //Control_Surface >> pipes >> serialmidi; 
 
   //This is the fallback/default method. MIDI will be sent out of anything in the pipes (above)
@@ -289,6 +305,17 @@ void loop() {
 
 
   adjustPB(); // Handles re-centering
+
+  // Calculate the corrected PB value (the same logic used in adjustPB)
+    uint32_t pbGetRawValue = potPB.getRawValue();
+    analog_t pbMapRawValue = map_PB(pbGetRawValue);
+
+    // Display PB info on the screen
+    tft.setTextColor(TFT_BLACK, TFT_WHITE); // Set text color and background to overwrite old numbers
+    tft.setCursor(10, 40);
+    tft.print("PB: ");
+    tft.print(pbMapRawValue);
+    tft.print("     "); // Trailing spaces to clear longer previous numbers
 
   debugPrint(); 
 
