@@ -324,10 +324,24 @@ void loop() {
    // Check if button on GPIO35 is pressed (LOW)
   if (digitalRead(BUTTON_SLEEP_PIN) == LOW) {
     Serial.println("Going to sleep...");
-    delay(10);
-    esp_deep_sleep_start();
-  }
     
+    // Turn off the TFT backlight to save power
+    digitalWrite(backlightPin, LOW); 
+    
+    delay(10);
+    
+    // Enter Light Sleep instead of Deep Sleep
+    esp_light_sleep_start();
+    
+    // -- CPU IS PAUSED HERE --
+    // Upon pressing the GPIO0 button, the code will resume on the very next line:
+    
+    digitalWrite(backlightPin, HIGH); // Turn the screen backlight back on
+    Serial.println("Awake from Light Sleep!");
+    
+    // Debounce delay to prevent bouncing straight back to sleep
+    delay(500);
+  }
 
 }//loop
 
