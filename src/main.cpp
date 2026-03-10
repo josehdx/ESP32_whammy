@@ -339,9 +339,27 @@ void loop() {
     digitalWrite(backlightPin, HIGH); // Turn the screen backlight back on
     Serial.println("Awake from Light Sleep!");
     
-    // Debounce delay to prevent bouncing straight back to sleep
+    // 1. Give the ESP32 power rail and BLE radio time to stabilize
+    delay(800); 
+    
+    // 2. Flush out the unstable ADC hardware capacitance
+    for (int i = 0; i < 20; i++) {
+        analogRead(pinPB);
+        delay(2);
+    }
+
+    // 3. CRITICAL: Reset the specific internal filter inside the PBPotentiometer!
+    // Calling begin() forces it to discard any pre-sleep or waking history 
+    // and immediately snap to the current stabilized stick position.
+    potPB.begin();
+    
+    // 4. Reset your standalone filter just in case
+    filterPB.resetToCurrentValue();
+    
+    // Debounce delay
     delay(500);
   }
+  
 
 }//loop
 
