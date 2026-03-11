@@ -1,4 +1,3 @@
-// 7MM_MIDI_EXAMPLE_JOSE_20260116
 // ron.nelson.ii@gmail.com
 // http://sevenmilemountain.etsy.com/
 
@@ -20,6 +19,9 @@
 
 #define SERIAL_BAUDRATE       921600  // all the new boards can handle this speed
 #define FORCE_CENTER_UPDATE_DELAY 250   // 0.25 seconds -- only force center updates every y secs (prevent overrun)
+
+#define BUTTON_SLEEP 35 //  if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
+#define BUTTON_WAKE  0 // if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
 
 //=================================================================================
 
@@ -207,8 +209,26 @@ void debugPrint() {
 }
 
 //=================================================================================
+void handlePowerManagement() {
+  // Check if GPIO 35 is pressed (assuming active LOW with internal pullup)
+  if (digitalRead(BUTTON_SLEEP) == LOW) {
+    // Wait for the button to be released
+    while (digitalRead(BUTTON_SLEEP) == LOW) {
+      delay(10);
+    }
+    
+    Serial.println("Entering Light Sleep...");
+    Serial.flush(); // Ensure the message is sent before sleeping
+    
+    // Enter Light Sleep
+    esp_light_sleep_start();
+    
+    // The code resumes here after waking up via GPIO 0
+    Serial.println("Woke up from Light Sleep!");
+  }
+}
 
-
+//=================================================================================
 
 void setup() {
 
@@ -245,6 +265,12 @@ void setup() {
   //Centering and deadzone are runtime only (no flash settings)
   calibrateCenterAndDeadzone();
 
+  pinMode(BUTTON_SLEEP, INPUT_PULLUP);
+  pinMode(BUTTON_WAKE, INPUT_PULLUP);
+
+  // Configure GPIO 0 as the wake-up source (LOW level triggers wake-up)
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_WAKE, 0);
+
 }//setup
 
 //=================================================================================
@@ -257,6 +283,8 @@ void loop() {
 
   adjustPB(); // Handles re-centering
 
+  handlePowerManagement();
+
   debugPrint(); 
 
   yield(); delay(5); // helpful for chips with watchdog timers, short pause to allow other tasks to catch up
@@ -266,4 +294,3 @@ void loop() {
 //=================================================================================
 //=================================================================================
 //=================================================================================
-
