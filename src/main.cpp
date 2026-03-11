@@ -23,7 +23,7 @@
 
 //=================================================================================
 
-pin_t pinPB = 15; // yours is 15
+pin_t pinPB = 12; // yours is 15
 int channelShift = 0; // 0 based, so 0 = midi channel 1
 
 //=================================================================================
@@ -32,10 +32,10 @@ int channelShift = 0; // 0 based, so 0 = midi channel 1
 //In this example code, we can output as BT MIDI, USB MIDI, and Serial MIDI (DIN-5) all at the same time.
 
 BluetoothMIDI_Interface btmidi; // output midi to bluetooth -- my test board doesn't have BT, so this is remarked out.
-USBMIDI_Interface usbmidi; // output midi to usb
-HardwareSerialMIDI_Interface serialmidi {Serial1, MIDI_BAUD}; // output to serial port for DIN-5 work.
+//USBMIDI_Interface usbmidi; // output midi to usb
+//HardwareSerialMIDI_Interface serialmidi {Serial1, MIDI_BAUD}; // output to serial port for DIN-5 work.
 
-MIDI_PipeFactory<3> pipes; // pipes allows you to output to multiple interfaces at the same time.
+//MIDI_PipeFactory<3> pipes; // pipes allows you to output to multiple interfaces at the same time.
 //The <2> above indicates the number of interfaces. If you used all three, it would be 3.
 
 //This was very confusing for me for a while, but getting Bankable working is very helpful for runtime settings changes.
@@ -134,14 +134,14 @@ void calibrateCenterAndDeadzone() {
     if (calibPB > calibPBHigh) { calibPBHigh=calibPB; } 
   }
   
-  PBcenter=map((analog_t(lSampleSumPB/iNumberOfSamples)), 0, 4095, 0, 16383);
+  PBcenter=map((analog_t(lSampleSumPB/iNumberOfSamples)), 0, 8191, 0, 16383);
   Serial.print("PB Center: "); Serial.println(PBcenter);
 
   //2025-05-26 : New safety feature, so that PBcenter never over above or below existing limits
   PBcenter=constrain(PBcenter, PBminimumValue, PBmaximumValue);
 
-  analog_t calibPBLowMidi = map(calibPBLow, 0, 4095, 0, 16383);
-  analog_t calibPBHighMidi = map(calibPBHigh, 0, 4095, 0, 16383);
+  analog_t calibPBLowMidi = map(calibPBLow, 0, 8191, 0, 16383);
+  analog_t calibPBHighMidi = map(calibPBHigh, 0, 8191, 0, 16383);
   Serial.print("PB Low MIDI: "); Serial.println(calibPBLowMidi);
   Serial.print("PB High MIDI: "); Serial.println(calibPBHighMidi);
  
@@ -226,13 +226,13 @@ void setup() {
   potPB.map(map_PB); // pitch bend - non-inverted
 
   // Manually connect the MIDI interfaces to Control Surface
-  Control_Surface >> pipes >> btmidi; //  -- my test board doesn't have BT, so this is remarked out.
-  Control_Surface >> pipes >> usbmidi;
+  //Control_Surface >> pipes >> btmidi; //  -- my test board doesn't have BT, so this is remarked out.
+  //Control_Surface >> pipes >> usbmidi;
   //Control_Surface >> pipes >> serialmidi; 
 
   //This is the fallback/default method. MIDI will be sent out of anything in the pipes (above)
-  usbmidi.setAsDefault();
-  //btmidi.setAsDefault();
+  //usbmidi.setAsDefault();
+  btmidi.setAsDefault();
 
 
   //Startup MIDI Control Surface
