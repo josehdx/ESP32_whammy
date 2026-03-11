@@ -18,7 +18,7 @@
 
 //=================================================================================
 
-#define SERIAL_BAUDRATE       31250  // all the new boards can handle this speed
+#define SERIAL_BAUDRATE       921600  // all the new boards can handle this speed
 #define FORCE_CENTER_UPDATE_DELAY 250   // 0.25 seconds -- only force center updates every y secs (prevent overrun)
 
 //=================================================================================
