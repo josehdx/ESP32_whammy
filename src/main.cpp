@@ -17,7 +17,7 @@
 
 //=================================================================================
 
-#define SERIAL_BAUDRATE       115200  // all the new boards can handle this speed
+#define SERIAL_BAUDRATE       921600  // all the new boards can handle this speed
 #define FORCE_CENTER_UPDATE_DELAY 250   // 0.25 seconds -- only force center updates every y secs (prevent overrun)
 
 #define BUTTON_SLEEP 35 //  if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
