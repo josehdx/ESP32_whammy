@@ -23,9 +23,14 @@
 #define BUTTON_SLEEP 35 //  if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
 #define BUTTON_WAKE  0 // if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
 
+// --- Battery monitoring variables ---
+#define BATTERY_PIN 34 // TTGO boards typically use GPIO 34 for the battery voltage divider
+unsigned long lastBatteryUpdate = 0;
+int lastDisplayedBat = -1; // Force first draw
+// -----------------------------------------
 //=================================================================================
 
-pin_t pinPB = A12; // yours is 15
+pin_t pinPB = A15; // yours is 15
 int channelShift = 0; // 0 based, so 0 = midi channel 1
 
 TFT_eSPI tft = TFT_eSPI(); 
@@ -34,29 +39,17 @@ uint16_t lastDisplayedPB = 0xFFFF;
 //=================================================================================
 
 //Control_Surface output interfaces 
-//In this example code, we can output as BT MIDI, USB MIDI, and Serial MIDI (DIN-5) all at the same time.
+BluetoothMIDI_Interface btmidi; 
+//USBMIDI_Interface usbmidi; 
+//HardwareSerialMIDI_Interface serialmidi {Serial1, MIDI_BAUD}; 
 
-BluetoothMIDI_Interface btmidi; // output midi to bluetooth -- my test board doesn't have BT, so this is remarked out.
-//USBMIDI_Interface usbmidi; // output midi to usb
-//HardwareSerialMIDI_Interface serialmidi {Serial1, MIDI_BAUD}; // output to serial port for DIN-5 work.
+Bank<16> bankChannel; 
 
-//MIDI_PipeFactory<3> pipes; // pipes allows you to output to multiple interfaces at the same time.
-//The <2> above indicates the number of interfaces. If you used all three, it would be 3.
-
-//This was very confusing for me for a while, but getting Bankable working is very helpful for runtime settings changes.
-Bank<16> bankChannel; // Banking allows for runtime channel changes. This sample code doesn't use it, but can.
-
-//Creates a PBPotentiometer object called potPB. It's tied to a bank, so can be bank switched
-//It's tied to the pin defined above (pinPB) and DEFAULTS to Channel 1
 Bankable::PBPotentiometer potPB {{bankChannel, BankType::ChangeChannel}, pinPB, Channel_1}; // pitch bend
 
-//This sets the filtering, which Control Surface uses to smooth out some of the data
-//On my board, it provides 12 bit numbers on the analogRead and I want it to work with 14 bit numbers.
 FilteredAnalog<12, 14, uint32_t, uint32_t> filterPB = pinPB;
 
 //=================================================================================
-
-//These are variables for defining the deadzone (the center point of PB pot which we want to ignore)
 
 double PBwiggle = 0.050;
 double PBdeadzoneMultiplier = 2.50;
@@ -67,27 +60,19 @@ double PBdeadzoneUpperShift = 0;
 
 //=================================================================================
 
-//These are variables for managing the Pitch Bend values. Highs, lows, defaults, centers, etc.
-
-analog_t PBminimumValue = 0; analog_t PBminimumDefault = PBminimumValue; // These should be measured actual 14 bit values.
-analog_t PBmaximumValue = 16383; analog_t PBmaximumDefault = PBmaximumValue; // These should be measured actual 14 bit values.
-analog_t PBcenter = ((PBmaximumValue-PBminimumValue)/2)+PBminimumValue; // default (rough) value
-analog_t PBdeadzone = PBdeadzoneMinimum; // default (rough) value -- this will be updated during setup
-analog_t PBminReading = PBminimumValue; analog_t PBmaxReading = PBmaximumValue; // for auto-ranging
+analog_t PBminimumValue = 0; analog_t PBminimumDefault = PBminimumValue; 
+analog_t PBmaximumValue = 16383; analog_t PBmaximumDefault = PBmaximumValue; 
+analog_t PBcenter = ((PBmaximumValue-PBminimumValue)/2)+PBminimumValue; 
+analog_t PBdeadzone = PBdeadzoneMinimum; 
+analog_t PBminReading = PBminimumValue; analog_t PBmaxReading = PBmaximumValue; 
 
 bool PBwasOffCenter = false;
 analog_t pbLastRawValue = 8192; // default
 long PBlastCenteredOn = millis();
 
 //=================================================================================
-//=================================================================================
-//=================================================================================
 
 analog_t map_PB(analog_t raw) {
-
-    //NON INVERTING -- invert (swap 0,8191 and 16383,8191) if your pot goes in the opposite direction
-    //In other words, you should invert or non-invert based in the orientation of your PB pot.
-    //DO NOT USE THE INVERT FUNCTION found in the Control Surface 2.0.0 library -- it OVERRIDES MAP!!!
 
     analog_t result = 0;
 
@@ -109,27 +94,19 @@ analog_t map_PB(analog_t raw) {
 }
 
 //=================================================================================
-//=================================================================================
 
 void calibrateCenterAndDeadzone() {
   
-  //IMPORTANT: As the Calibration has been called AFTER CONTROL SURFACE
-  //           the values returned by analogRead will be the FILTERS range.
-  //           We get 12 bit (0 to 4095) values!
-
   Serial.println("Calibrating Center and Deadzones...");
   Serial.println("Please Wait...Do Not Touch Stick!");
   
-  //Determine joystick center points
   int iNumberOfSamples = 750; 
 
-  //Defaults to inverse so we don't have a fake mid-point
   analog_t calibPBLow = 4095; 
   analog_t calibPBHigh = 0; 
 
   Serial.print("Sampling center. Number of samples: "); Serial.println(iNumberOfSamples);
   
-  //Determine center point of PB
   pinMode(pinPB, INPUT);
   long lSampleSumPB = 0;
   for (int iSample = 1; iSample<=iNumberOfSamples; iSample++) {
@@ -142,7 +119,6 @@ void calibrateCenterAndDeadzone() {
   PBcenter=map((analog_t(lSampleSumPB/iNumberOfSamples)), 0, 4095, 0, 16383);
   Serial.print("PB Center: "); Serial.println(PBcenter);
 
-  //2025-05-26 : New safety feature, so that PBcenter never over above or below existing limits
   PBcenter=constrain(PBcenter, PBminimumValue, PBmaximumValue);
 
   analog_t calibPBLowMidi = map(calibPBLow, 0, 4095, 0, 16383);
@@ -157,46 +133,76 @@ void calibrateCenterAndDeadzone() {
 }
 
 //=================================================================================
-//=================================================================================
+// --- FLICKER-FREE SCREEN FUNCTIONS ---
+void updateScreenBattery() {
+  if (millis() - lastBatteryUpdate > 10000 || lastDisplayedBat == -1) {
+    lastBatteryUpdate = millis();
+    
+    long rawSum = 0;
+    for (int i = 0; i < 20; i++) {
+      rawSum += analogRead(BATTERY_PIN);
+      delay(2); 
+    }
+    int rawValue = rawSum / 20; 
+
+    int batteryPct = map(rawValue, 1985, 2605, 0, 100);
+    batteryPct = constrain(batteryPct, 0, 100);
+
+    if (batteryPct != lastDisplayedBat) {
+      char batStr[10];
+      // No more manual spaces needed!
+      sprintf(batStr, "%d%%", batteryPct); 
+      
+      if (batteryPct > 20) {
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+      } else {
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+      }
+      
+      tft.setTextDatum(TL_DATUM); 
+      
+      // --- NEW: Force the background to paint 80 pixels wide ---
+      tft.setTextPadding(80); 
+      tft.drawString(batStr, tft.width() / 2, 90, 4); 
+      tft.setTextPadding(0); // Reset padding so it doesn't affect other things
+      // ---------------------------------------------------------
+      
+      lastDisplayedBat = batteryPct;
+    }
+  }
+}
 
 void updateScreenPB(uint16_t currentPB) {
   if (currentPB != lastDisplayedPB) {
-    // --- NEW: Erase the previous text area to prevent ghosting ---
-    // Start at our text X/Y coordinates and draw a black box 
-    // 80 pixels wide and 30 pixels tall to cover the old digits.
-    tft.fillRect(tft.width() / 2, 50, 80, 30, TFT_BLACK);
-    
-    char pbStr[10];
-    // No need to pad with spaces anymore since we cleared the background
+    char pbStr[10]; 
+    // Just the raw number, no manual padding needed!
     sprintf(pbStr, "%u", currentPB); 
     
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK); 
     tft.setTextDatum(TL_DATUM); 
+    
+    // --- NEW: Force the background to paint 80 pixels wide ---
+    tft.setTextPadding(80);
     tft.drawString(pbStr, tft.width() / 2, 50, 4); 
+    tft.setTextPadding(0); // Reset padding 
+    // ---------------------------------------------------------
     
     lastDisplayedPB = currentPB;
   }
 }
 // ------------------------------------------------------------------
+
 void adjustPB() {
 
-  //The 12 bit getValue is used only for the continous send on low and high. Otherwise, not needed.
-  uint32_t pbGetValue = potPB.getValue(); // This is a 12 bit value (0 to 4095)
-
-  //We need to use the 14 bit full value provided by getRawValue to do the deadzone magic.
-  uint32_t pbGetRawValue = potPB.getRawValue(); // This is a 14 bit value (0 to 16383)
+  uint32_t pbGetValue = potPB.getValue(); 
+  uint32_t pbGetRawValue = potPB.getRawValue(); 
   analog_t pbMapRawValue = map_PB(pbGetRawValue);
-
 
   updateScreenPB(pbMapRawValue);
 
-  //Continuous send on low -- OPTIONAL
   if (pbGetValue==0) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 0); }
 
-  //If it was off center, but now back to center, force a zero (center)
   if (pbMapRawValue==8192 && PBwasOffCenter) {
-    //Serial.print("RE-CENTER REQUEST...");
-    //Throttle this behavior. Say, X times in last Y seconds? (like flash update delay).
     if ( (millis()-PBlastCenteredOn) > (FORCE_CENTER_UPDATE_DELAY) ) { 
       Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 8192);
       PBwasOffCenter = false;
@@ -205,19 +211,16 @@ void adjustPB() {
     }
   }
 
-  //continuous send on high -- OPTIONAL
   if (pbGetValue==8192) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 16383); }
 
-}//adjustPB
+}
 
 //=================================================================================
 
 void debugPrint() {
-  //Optional -- if you want to check on what analogRead is really providing
-  //The resolution (7, 10, 12, 14, 16) will depend on your MCUs ADC
   Serial.print("AR: ");
   Serial.print(analogRead(pinPB)); Serial.print("\t");
-  Serial.print("CS: "); // Channel Shift (channel # - 1)
+  Serial.print("CS: "); 
   Serial.print(channelShift); Serial.print("\t");
   Serial.print("PB Min/Cen/Max/Range/DZ: ");
   Serial.print(PBminimumValue); Serial.print(" ");
@@ -234,38 +237,30 @@ void debugPrint() {
 
 //=================================================================================
 void handlePowerManagement() {
-  // Check if GPIO 35 is pressed (assuming active LOW with internal pullup)
   if (digitalRead(BUTTON_SLEEP) == LOW) {
-    // Wait for the button to be released
     while (digitalRead(BUTTON_SLEEP) == LOW) {
       delay(10);
     }
     
     Serial.println("Entering Light Sleep...");
-    Serial.flush(); // Ensure the message is sent before sleeping
+    Serial.flush(); 
     
-    // --- NEW: Put the screen to sleep and turn off backlight ---
-    tft.writecommand(TFT_DISPOFF); // Turn off display output
-    tft.writecommand(TFT_SLPIN);   // Put TFT controller to sleep
+    tft.writecommand(TFT_DISPOFF); 
+    tft.writecommand(TFT_SLPIN);   
     #ifdef TFT_BL
-      digitalWrite(TFT_BL, LOW);   // Kill the backlight LED
+      digitalWrite(TFT_BL, LOW);   
     #endif
-    // -----------------------------------------------------------
     
-    // Enter Light Sleep
     esp_light_sleep_start();
     
-    // The code resumes here after waking up via GPIO 0
     Serial.println("Woke up from Light Sleep!");
 
-    // --- NEW: Wake the screen back up ---
-    tft.writecommand(TFT_SLPOUT);  // Wake up TFT controller
-    delay(120);                    // The TFT controller needs ~120ms to safely wake up
-    tft.writecommand(TFT_DISPON);  // Turn on display output
+    tft.writecommand(TFT_SLPOUT);  
+    delay(120);                    
+    tft.writecommand(TFT_DISPON);  
     #ifdef TFT_BL
-      digitalWrite(TFT_BL, HIGH);  // Turn the backlight LED back on
+      digitalWrite(TFT_BL, HIGH);  
     #endif
-    // ------------------------------------
   }
 }
 
@@ -273,87 +268,68 @@ void handlePowerManagement() {
 
 void setup() {
 
-  //For debugging output
-  Serial.begin(SERIAL_BAUDRATE); // this is the serial debug baud rate -- NOT MIDI
+  Serial.begin(SERIAL_BAUDRATE); 
 
-// --- Screen setup on start/reboot ---
+  pinMode(BATTERY_PIN, INPUT);
+
+  // --- Screen setup on start/reboot ---
   tft.init();
-  tft.setRotation(1); // Standard landscape, adjusts based on your User_Setup.h
+  tft.setRotation(1); 
   tft.fillScreen(TFT_BLACK);
 
-  // Turn on TFT backlight explicitly if the board definition assigns the macro
   #ifdef TFT_BL
     pinMode(TFT_BL, OUTPUT);
     digitalWrite(TFT_BL, HIGH);
   #endif
 
-  // Draw "Active" in top center
+  // Draw "Active" dead center
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.setTextDatum(TC_DATUM); // Top-Center alignment
-  tft.drawString("Active", tft.width() / 2, 10, 4); // Display in font size 4
+  tft.setTextDatum(TC_DATUM); 
+  tft.drawString("Active", tft.width() / 2, 10, 4); 
 
-  // Draw "PB: " text layout
+  // Draw the fixed text labels directly to the LEFT of the center
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextDatum(TR_DATUM); // Top-Right aligned so it docks beautifully left of the center
+  tft.setTextDatum(TR_DATUM); 
   tft.drawString("PB: ", tft.width() / 2, 50, 4);
+  tft.drawString("Battery: ", tft.width() / 2, 90, 4);
   // -----------------------------------------
 
-  btmidi.setName("TTGO"); //bt device name  
+  btmidi.setName("TTGO"); 
 
-
-  //Setup Control_Surface filters
   FilteredAnalog<>::setupADC();
   filterPB.resetToCurrentValue();
 
-  //Setup Control_Surface mapping
-  potPB.map(map_PB); // pitch bend - non-inverted
+  potPB.map(map_PB); 
 
-  // Manually connect the MIDI interfaces to Control Surface
-  //Control_Surface >> pipes >> btmidi; //  -- my test board doesn't have BT, so this is remarked out.
-  //Control_Surface >> pipes >> usbmidi;
-  //Control_Surface >> pipes >> serialmidi; 
-
-  //This is the fallback/default method. MIDI will be sent out of anything in the pipes (above)
-  //usbmidi.setAsDefault();
   btmidi.setAsDefault();
 
-
-  //Startup MIDI Control Surface
   Control_Surface.begin();
 
-  //Set the default/startup MIDI Channel
-  //Zero based (0 = midi channel 1) -- in my full code this is a runtime variable
   bankChannel.select(channelShift);
 
-  //Centering and deadzone are runtime only (no flash settings)
   calibrateCenterAndDeadzone();
 
   pinMode(BUTTON_SLEEP, INPUT_PULLUP);
   pinMode(BUTTON_WAKE, INPUT_PULLUP);
 
-  // Configure GPIO 0 as the wake-up source (LOW level triggers wake-up)
   esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_WAKE, 0);
 
 }//setup
 
-//=================================================================================
-//=================================================================================
 //=================================================================================
 
 void loop() {
 
   Control_Surface.loop();
 
-  adjustPB(); // Handles re-centering
+  adjustPB(); 
+
+  updateScreenBattery(); 
 
   handlePowerManagement();
 
   debugPrint(); 
 
-  yield(); delay(5); // helpful for chips with watchdog timers, short pause to allow other tasks to catch up
+  yield(); delay(5); 
   
-}//loop
-
-//=================================================================================
-//=================================================================================
-//=================================================================================
+}
