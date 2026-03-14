@@ -13,7 +13,7 @@
 #include <Arduino.h>
 #include <Control_Surface.h>
 #include <AH/Hardware/MultiPurposeButton.hpp>
-
+#include <TFT_eSPI.h>
 
 //=================================================================================
 
@@ -27,6 +27,9 @@
 
 pin_t pinPB = A12; // yours is 15
 int channelShift = 0; // 0 based, so 0 = midi channel 1
+
+TFT_eSPI tft = TFT_eSPI(); 
+uint16_t lastDisplayedPB = 0xFFFF;
 
 //=================================================================================
 
@@ -156,7 +159,25 @@ void calibrateCenterAndDeadzone() {
 //=================================================================================
 //=================================================================================
 
-
+void updateScreenPB(uint16_t currentPB) {
+  if (currentPB != lastDisplayedPB) {
+    // --- NEW: Erase the previous text area to prevent ghosting ---
+    // Start at our text X/Y coordinates and draw a black box 
+    // 80 pixels wide and 30 pixels tall to cover the old digits.
+    tft.fillRect(tft.width() / 2, 50, 80, 30, TFT_BLACK);
+    
+    char pbStr[10];
+    // No need to pad with spaces anymore since we cleared the background
+    sprintf(pbStr, "%u", currentPB); 
+    
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setTextDatum(TL_DATUM); 
+    tft.drawString(pbStr, tft.width() / 2, 50, 4); 
+    
+    lastDisplayedPB = currentPB;
+  }
+}
+// ------------------------------------------------------------------
 void adjustPB() {
 
   //The 12 bit getValue is used only for the continous send on low and high. Otherwise, not needed.
@@ -165,6 +186,9 @@ void adjustPB() {
   //We need to use the 14 bit full value provided by getRawValue to do the deadzone magic.
   uint32_t pbGetRawValue = potPB.getRawValue(); // This is a 14 bit value (0 to 16383)
   analog_t pbMapRawValue = map_PB(pbGetRawValue);
+
+
+  updateScreenPB(pbMapRawValue);
 
   //Continuous send on low -- OPTIONAL
   if (pbGetValue==0) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 0); }
@@ -220,11 +244,28 @@ void handlePowerManagement() {
     Serial.println("Entering Light Sleep...");
     Serial.flush(); // Ensure the message is sent before sleeping
     
+    // --- NEW: Put the screen to sleep and turn off backlight ---
+    tft.writecommand(TFT_DISPOFF); // Turn off display output
+    tft.writecommand(TFT_SLPIN);   // Put TFT controller to sleep
+    #ifdef TFT_BL
+      digitalWrite(TFT_BL, LOW);   // Kill the backlight LED
+    #endif
+    // -----------------------------------------------------------
+    
     // Enter Light Sleep
     esp_light_sleep_start();
     
     // The code resumes here after waking up via GPIO 0
     Serial.println("Woke up from Light Sleep!");
+
+    // --- NEW: Wake the screen back up ---
+    tft.writecommand(TFT_SLPOUT);  // Wake up TFT controller
+    delay(120);                    // The TFT controller needs ~120ms to safely wake up
+    tft.writecommand(TFT_DISPON);  // Turn on display output
+    #ifdef TFT_BL
+      digitalWrite(TFT_BL, HIGH);  // Turn the backlight LED back on
+    #endif
+    // ------------------------------------
   }
 }
 
@@ -234,6 +275,28 @@ void setup() {
 
   //For debugging output
   Serial.begin(SERIAL_BAUDRATE); // this is the serial debug baud rate -- NOT MIDI
+
+// --- Screen setup on start/reboot ---
+  tft.init();
+  tft.setRotation(1); // Standard landscape, adjusts based on your User_Setup.h
+  tft.fillScreen(TFT_BLACK);
+
+  // Turn on TFT backlight explicitly if the board definition assigns the macro
+  #ifdef TFT_BL
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);
+  #endif
+
+  // Draw "Active" in top center
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM); // Top-Center alignment
+  tft.drawString("Active", tft.width() / 2, 10, 4); // Display in font size 4
+
+  // Draw "PB: " text layout
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(TR_DATUM); // Top-Right aligned so it docks beautifully left of the center
+  tft.drawString("PB: ", tft.width() / 2, 50, 4);
+  // -----------------------------------------
 
   btmidi.setName("TTGO"); //bt device name  
 
