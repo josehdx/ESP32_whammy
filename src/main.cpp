@@ -1,3 +1,5 @@
+//latest code with power saving features on//dont delete this code yet
+
 // ron.nelson.ii@gmail.com
 // http://sevenmilemountain.etsy.com/
 
@@ -20,14 +22,28 @@
 #define SERIAL_BAUDRATE       115200  // all the new boards can handle this speed
 #define FORCE_CENTER_UPDATE_DELAY 250   // 0.25 seconds -- only force center updates every y secs (prevent overrun)
 
-#define BUTTON_SLEEP 35 //  if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
+//  button pin definitions for sleep/wake functionality. Set to 0 or NO_PIN if you don't want to use this feature. If you do want to use it, set these to the pin numbers of the buttons you want to use for sleeping and waking up the board. You can use the same button for both sleep and wake if you want, just set both to the same pin number.
+#define BUTTON_SLEEP 0 //  if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
 #define BUTTON_WAKE  0 // if you want to use a button to wake up the board from sleep, set this to the pin number of the button. Otherwise, set to 0 or NO_PIN.
 
 // --- Battery monitoring variables ---
 #define BATTERY_PIN 34 // TTGO boards typically use GPIO 34 for the battery voltage divider
 unsigned long lastBatteryUpdate = 0;
 int lastDisplayedBat = -1; // Force first draw
-// -----------------------------------------
+
+// --- Screen dimming variables ---
+#define BUTTON_BRIGHTNESS 35
+bool isManuallyDimmed = false;
+
+
+// --- Power Management Timers ---
+#define DIM_TIME 60000           //
+#define SLEEP_TIME 120000        //
+#define BRIGHTNESS_FULL 255      //
+#define BRIGHTNESS_DIM 25      // 10% brightness
+
+unsigned long lastActivityTime = 0; //
+bool isDimmed = false;              //
 //=================================================================================
 
 pin_t pinPB = A15; // yours is 15
@@ -133,7 +149,35 @@ void calibrateCenterAndDeadzone() {
 }
 
 //=================================================================================
-// --- FLICKER-FREE SCREEN FUNCTIONS ---
+void resetActivityTimer() {
+  lastActivityTime = millis();
+  // Ensure backlight returns to 100% on any activity
+  ledcWrite(TFT_BL, BRIGHTNESS_FULL);
+  isDimmed = false;
+  isManuallyDimmed = false;
+}
+
+//=================================================================================
+void enterLightSleep() {
+  tft.writecommand(TFT_DISPOFF); 
+  tft.writecommand(TFT_SLPIN);   
+  
+  ledcWrite(TFT_BL, 0); // Turn backlight fully off using pin identifier
+
+  esp_light_sleep_start(); 
+
+  // --- WAKE UP HAPPENS HERE ---
+  while (digitalRead(BUTTON_WAKE) == LOW) { delay(10); } // Prevent immediate re-sleep
+  
+  tft.writecommand(TFT_SLPOUT); 
+  delay(120);                   
+  tft.writecommand(TFT_DISPON);  
+  
+  resetActivityTimer(); 
+  Serial.println("System Restored.");
+}
+
+//=================================================================================
 void updateScreenBattery() {
   if (millis() - lastBatteryUpdate > 10000 || lastDisplayedBat == -1) {
     lastBatteryUpdate = millis();
@@ -145,74 +189,139 @@ void updateScreenBattery() {
     }
     int rawValue = rawSum / 20; 
 
-    int batteryPct = map(rawValue, 1985, 2605, 0, 100);
-    batteryPct = constrain(batteryPct, 0, 100);
+    //=================================================================================
+    // Print to Serial for calibration
+    Serial.print("RAW BATTERY READING: ");
+    Serial.println(rawValue);
+    //=================================================================================
 
-    if (batteryPct != lastDisplayedBat) {
-      char batStr[10];
-      // No more manual spaces needed!
-      sprintf(batStr, "%d%%", batteryPct); 
-      
-      if (batteryPct > 20) {
-        tft.setTextColor(TFT_GREEN, TFT_BLACK);
-      } else {
-        tft.setTextColor(TFT_RED, TFT_BLACK);
-      }
-      
-      tft.setTextDatum(TL_DATUM); 
-      
-      // --- NEW: Force the background to paint 80 pixels wide ---
-      tft.setTextPadding(80); 
-      tft.drawString(batStr, tft.width() / 2, 90, 4); 
-      tft.setTextPadding(0); // Reset padding so it doesn't affect other things
-      // ---------------------------------------------------------
-      
-      lastDisplayedBat = batteryPct;
+    // Map your battery values (adjust the first 2 rawValues below based on your Serial findings)
+    int batteryPct = map(rawValue, 1750, 2480, 0, 100);
+    batteryPct = constrain(batteryPct, 0, 100);
+    //=================================================================================
+
+    if (batteryPct > 20) {
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    } else {
+      tft.setTextColor(TFT_RED, TFT_BLACK);
     }
+
+    // This prevents the "Battery:" label (which is right-aligned to center) from being covered.
+    tft.setTextDatum(TL_DATUM); 
+    
+    // Set padding to clear old numbers (3-digit "100" needs about 60-70 pixels)
+    tft.setTextPadding(70); 
+    
+    // Draw the Percentage starting slightly to the right of the screen center (width/2 + 5)
+    // and at the same height as your label (y = 90)
+    tft.drawString(String(batteryPct) + "%", (tft.width() / 2) + 5, 90, 4); 
+
+    /* Draw the RAW value in the bottom right corner as previously requested
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK); 
+    tft.setTextDatum(BR_DATUM); 
+    tft.setTextPadding(65); 
+    tft.drawString("RAW: " + String(rawValue), tft.width(), tft.height(), 2);  */
+
+    tft.setTextPadding(0); // Always reset padding after drawing
+    lastDisplayedBat = batteryPct;
   }
 }
 
+//=================================================================================
+
 void updateScreenPB(uint16_t currentPB) {
   if (currentPB != lastDisplayedPB) {
-    char pbStr[10]; 
-    // Just the raw number, no manual padding needed!
-    sprintf(pbStr, "%u", currentPB); 
+    // Interpolate: Convert MIDI 0 - 16383 to -8192 - 8192
+    int displayValue = (int)currentPB - 8192; 
+    
+    char pbStr[12]; 
+    if (displayValue == 0) {
+      // Clean zero without a sign
+      sprintf(pbStr, "0"); 
+    } else {
+      // %+d forces the + or - sign for all other numbers
+      sprintf(pbStr, "%+d", displayValue); 
+    }
     
     tft.setTextColor(TFT_CYAN, TFT_BLACK); 
     tft.setTextDatum(TL_DATUM); 
     
-    // --- NEW: Force the background to paint 80 pixels wide ---
-    tft.setTextPadding(80);
-    tft.drawString(pbStr, tft.width() / 2, 50, 4); 
-    tft.setTextPadding(0); // Reset padding 
-    // ---------------------------------------------------------
+    // Wider padding to handle the sign and 4 digits without clipping
+    tft.setTextPadding(110); 
     
+    // Aligned with the +5 offset to match the battery label fix
+    tft.drawString(pbStr, (tft.width() / 2) + 5, 50, 4); 
+    
+    tft.setTextPadding(0); 
     lastDisplayedPB = currentPB;
   }
 }
 // ------------------------------------------------------------------
 
-void adjustPB() {
+void handleManualBrightnessToggle() {
+  static bool lastBtnState = HIGH;
+  static bool waitingForRelease = false;
+  bool currentBtnState = digitalRead(BUTTON_BRIGHTNESS);
 
+  if (lastBtnState == HIGH && currentBtnState == LOW) {
+    waitingForRelease = true;
+    delay(20); 
+  }
+
+  if (waitingForRelease && lastBtnState == LOW && currentBtnState == HIGH) {
+    // If the screen is currently dimmed (auto or manual), wake it up to 100%
+    if (isDimmed || isManuallyDimmed) {
+        resetActivityTimer(); 
+    } else {
+        // If it was already bright, manually dim it
+        ledcWrite(TFT_BL, BRIGHTNESS_DIM);
+        isManuallyDimmed = true;
+        isDimmed = true;
+        lastActivityTime = millis();
+    }
+    waitingForRelease = false;
+  }
+  lastBtnState = currentBtnState;
+}
+
+// ------------------------------------------------------------------
+
+
+void adjustPB() {
   uint32_t pbGetValue = potPB.getValue(); 
   uint32_t pbGetRawValue = potPB.getRawValue(); 
   analog_t pbMapRawValue = map_PB(pbGetRawValue);
+  
+  // --- FIX: Only define lastRaw ONCE ---
+  static uint32_t lastRaw = 0;
+
+  // Detect movement to wake the screen
+  if (abs((int)(pbGetRawValue - (int)lastRaw)) > 100) { 
+    if (isDimmed || isManuallyDimmed) {
+      resetActivityTimer(); // Restore 100% brightness
+    } else {
+      lastActivityTime = millis(); // Refresh the inactivity timer
+    }
+    lastRaw = pbGetRawValue;
+  }
 
   updateScreenPB(pbMapRawValue);
 
-  if (pbGetValue==0) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 0); }
+  if (pbGetValue == 0) { 
+    Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)0); 
+  }
 
-  if (pbMapRawValue==8192 && PBwasOffCenter) {
-    if ( (millis()-PBlastCenteredOn) > (FORCE_CENTER_UPDATE_DELAY) ) { 
-      Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 8192);
+  if (pbMapRawValue == 8192 && PBwasOffCenter) {
+    if ((millis() - PBlastCenteredOn) > FORCE_CENTER_UPDATE_DELAY) { 
+      Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)8192);
       PBwasOffCenter = false;
       PBlastCenteredOn = millis();
-      Serial.println("[FORCE MIDI CENTER]");
     }
   }
 
-  if (pbGetValue==8192) { Control_Surface.sendPitchBend(Channel(channelShift) , (uint16_t) 16383); }
-
+  if (pbGetValue == 8192) { 
+    Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t) 16383); 
+  }
 }
 
 //=================================================================================
@@ -236,33 +345,34 @@ void debugPrint() {
 }
 
 //=================================================================================
-void handlePowerManagement() {
-  if (digitalRead(BUTTON_SLEEP) == LOW) {
-    while (digitalRead(BUTTON_SLEEP) == LOW) {
-      delay(10);
-    }
-    
-    Serial.println("Entering Light Sleep...");
-    Serial.flush(); 
-    
-    tft.writecommand(TFT_DISPOFF); 
-    tft.writecommand(TFT_SLPIN);   
-    #ifdef TFT_BL
-      digitalWrite(TFT_BL, LOW);   
-    #endif
-    
-    esp_light_sleep_start();
-    
-    Serial.println("Woke up from Light Sleep!");
+void handlePowerOrchestrator() {
+  unsigned long inactiveDuration = millis() - lastActivityTime;
 
-    tft.writecommand(TFT_SLPOUT);  
-    delay(120);                    
-    tft.writecommand(TFT_DISPON);  
-    #ifdef TFT_BL
-      digitalWrite(TFT_BL, HIGH);  
-    #endif
+  // --- MANUAL SLEEP BUTTON CHECK ---
+  if (digitalRead(BUTTON_SLEEP) == LOW) {
+    while (digitalRead(BUTTON_SLEEP) == LOW) { delay(10); } // Wait for release
+    Serial.println("Manual Command: Entering Light Sleep...");
+    enterLightSleep(); 
+    return; // Exit function after waking up
+  }
+
+  // --- AUTOMATIC TIMERS ---
+  // Stage 1: Auto-Dim after 5 minutes
+  if (!isDimmed && !isManuallyDimmed && inactiveDuration > DIM_TIME && inactiveDuration < SLEEP_TIME) {
+    ledcWrite(TFT_BL, BRIGHTNESS_DIM); 
+    isDimmed = true;
+    Serial.println("Inactivity: Dimming Screen...");
+  }
+
+  // Stage 2: Auto-Sleep after 10 minutes
+  if (inactiveDuration > SLEEP_TIME) {
+    Serial.println("Inactivity: Entering Light Sleep...");
+    enterLightSleep(); 
   }
 }
+
+//=================================================================================
+
 
 //=================================================================================
 
@@ -272,15 +382,21 @@ void setup() {
 
   pinMode(BATTERY_PIN, INPUT);
 
+  pinMode(BUTTON_BRIGHTNESS, INPUT_PULLUP);
+
   // --- Screen setup on start/reboot ---
   tft.init();
   tft.setRotation(1); 
   tft.fillScreen(TFT_BLACK);
 
   #ifdef TFT_BL
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, HIGH);
-  #endif
+  // In ESP32 Core 3.0+, ledcSetup is replaced by ledcAttach
+  // Syntax: ledcAttach(pin, frequency, resolution)
+  ledcAttach(TFT_BL, 5000, 8); 
+  ledcWrite(TFT_BL, BRIGHTNESS_FULL); // Use the PIN directly instead of a channel
+#endif
+
+  lastActivityTime = millis(); // Initialize activity timer
 
   // Draw "Active" dead center
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -326,9 +442,10 @@ void loop() {
 
   updateScreenBattery(); 
 
-  handlePowerManagement();
-
-  debugPrint(); 
+  handlePowerOrchestrator();
+  handleManualBrightnessToggle();
+ 
+  //debugPrint(); 
 
   yield(); delay(5); 
   
