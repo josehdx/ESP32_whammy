@@ -16,7 +16,6 @@
 #include <Control_Surface.h>
 #include <AH/Hardware/MultiPurposeButton.hpp>
 #include <TFT_eSPI.h>
-
 //=================================================================================
 
 #define SERIAL_BAUDRATE       115200  // all the new boards can handle this speed
@@ -44,6 +43,10 @@ bool isManuallyDimmed = false;
 
 unsigned long lastActivityTime = 0; //
 bool isDimmed = false;              //
+
+// --- Bluetooth State Variables ---
+bool lastBTConnectedState = false;
+bool forceBTUpdate = true; // Forces the text to draw on the very first loop
 //=================================================================================
 
 pin_t pinPB = A15; // yours is 15
@@ -228,6 +231,39 @@ void updateScreenBattery() {
 }
 
 //=================================================================================
+//=================================================================================
+
+void updateScreenConnection() {
+  // Use Control Surface's built-in connection tracker
+  bool currentConnectedState = btmidi.isConnected();
+
+  // Only update the screen if the state changed (or on first boot)
+  if (currentConnectedState != lastBTConnectedState || forceBTUpdate) {
+    
+    tft.setTextDatum(TC_DATUM); 
+    
+    // Increased padding to 200 to clear the background for the larger Font 4
+    tft.setTextPadding(200);    
+
+    if (currentConnectedState) {
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
+      // Changed the '2' at the end to a '4' to match PB and Battery
+      tft.drawString("BT: Connected", tft.width() / 2, 10, 4); 
+    } else {
+      tft.setTextColor(TFT_ORANGE, TFT_BLACK);
+      // Changed the '2' at the end to a '4' to match PB and Battery
+      tft.drawString("BT: Waiting...", tft.width() / 2, 10, 4); 
+    }
+
+    tft.setTextPadding(0); // Reset padding
+    
+    lastBTConnectedState = currentConnectedState;
+    forceBTUpdate = false;
+  }
+}
+//=================================================================================
+//=================================================================================
+
 
 void updateScreenPB(uint16_t currentPB) {
   if (currentPB != lastDisplayedPB) {
@@ -345,6 +381,7 @@ void debugPrint() {
 }
 
 //=================================================================================
+//=================================================================================
 void handlePowerOrchestrator() {
   unsigned long inactiveDuration = millis() - lastActivityTime;
 
@@ -366,14 +403,22 @@ void handlePowerOrchestrator() {
 
   // Stage 2: Auto-Sleep after 10 minutes
   if (inactiveDuration > SLEEP_TIME) {
-    Serial.println("Inactivity: Entering Light Sleep...");
-    enterLightSleep(); 
+    
+    // Check if Bluetooth is currently connected
+    if (!btmidi.isConnected()) {
+      Serial.println("Inactivity: Entering Light Sleep...");
+      enterLightSleep(); 
+    } else {
+      // We are connected! Intercept the sleep command.
+      // Set the timer back to just after the DIM_TIME threshold. 
+      // This prevents the screen from blazing back to 100% brightness, 
+      // but keeps the device fully awake and looping.
+      lastActivityTime = millis() - DIM_TIME - 1000; 
+    }
+    
   }
 }
-
 //=================================================================================
-
-
 //=================================================================================
 
 void setup() {
@@ -394,14 +439,9 @@ void setup() {
   // Syntax: ledcAttach(pin, frequency, resolution)
   ledcAttach(TFT_BL, 5000, 8); 
   ledcWrite(TFT_BL, BRIGHTNESS_FULL); // Use the PIN directly instead of a channel
-#endif
+  #endif
 
   lastActivityTime = millis(); // Initialize activity timer
-
-  // Draw "Active" dead center
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.setTextDatum(TC_DATUM); 
-  tft.drawString("Active", tft.width() / 2, 10, 4); 
 
   // Draw the fixed text labels directly to the LEFT of the center
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -441,7 +481,7 @@ void loop() {
   adjustPB(); 
 
   updateScreenBattery(); 
-
+  updateScreenConnection();
   handlePowerOrchestrator();
   handleManualBrightnessToggle();
  
