@@ -346,9 +346,6 @@ void adjustPB() {
     lastRaw = pbGetRawValue;
   }
 
-  if (isScreenOn) {
-    updateScreenPB(pbMapRawValue);
-  }
 
   uint16_t valueToSend = pbMapRawValue;
 
@@ -484,6 +481,15 @@ void loop() {
 
   adjustPB(); 
 
+    static unsigned long lastScreenDrawTime = 0;
+  if (millis() - lastScreenDrawTime > 50) {
+      if (isScreenOn) {
+          // Pass the global lastSentPBValue updated by adjustPB()
+          updateScreenPB(lastSentPBValue); 
+      }
+      lastScreenDrawTime = millis();
+  }
+
   // Only update battery and connection graphics if the screen is actually on
   if (isScreenOn) {
     updateScreenBattery(); 
@@ -494,6 +500,7 @@ void loop() {
   handleManualScreenOff();
   //debugPrint(); 
 
-  yield(); delay(5); 
+  yield(); delay(1); 
   
 }
+
