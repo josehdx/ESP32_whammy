@@ -30,19 +30,14 @@
 unsigned long lastBatteryUpdate = 0;
 int lastDisplayedBat = -1; // Force first draw
 
-// --- Screen dimming variables ---
-#define BUTTON_BRIGHTNESS 35
-bool isManuallyDimmed = false;
+// --- Screen Toggle variables ---
+#define BUTTON_SCREEN_OFF 35 // REMINDER: Pin 35 needs a physical pull-up resistor!
+bool isScreenOn = true;      // Tracks if the display is active
 
 
 // --- Power Management Timers ---
-#define DIM_TIME 60000           //
-#define SLEEP_TIME 120000        //
-#define BRIGHTNESS_FULL 255      //
-#define BRIGHTNESS_DIM 25      // 10% brightness
-
-unsigned long lastActivityTime = 0; //
-bool isDimmed = false;              //
+#define SLEEP_TIME 120000        // 2 minutes to Light Sleep
+unsigned long lastActivityTime = 0;
 
 // --- Bluetooth State Variables ---
 bool lastBTConnectedState = false;
@@ -154,10 +149,8 @@ void calibrateCenterAndDeadzone() {
 //=================================================================================
 void resetActivityTimer() {
   lastActivityTime = millis();
-  // Ensure backlight returns to 100% on any activity
-  ledcWrite(TFT_BL, BRIGHTNESS_FULL);
-  isDimmed = false;
-  isManuallyDimmed = false;
+  // Notice we NO LONGER force the screen back on here. 
+  // If you turned it off with the button, it stays off!
 }
 
 //=================================================================================
@@ -165,7 +158,7 @@ void enterLightSleep() {
   tft.writecommand(TFT_DISPOFF); 
   tft.writecommand(TFT_SLPIN);   
   
-  ledcWrite(TFT_BL, 0); // Turn backlight fully off using pin identifier
+  digitalWrite(TFT_BL, LOW); // Turn backlight fully off
 
   esp_light_sleep_start(); 
 
@@ -175,6 +168,8 @@ void enterLightSleep() {
   tft.writecommand(TFT_SLPOUT); 
   delay(120);                   
   tft.writecommand(TFT_DISPON);  
+  digitalWrite(TFT_BL, HIGH);
+  isScreenOn = true;                  // Sync the state
   
   resetActivityTimer(); 
   Serial.println("System Restored.");
@@ -293,27 +288,24 @@ void updateScreenPB(uint16_t currentPB) {
   }
 }
 // ------------------------------------------------------------------
-
-void handleManualBrightnessToggle() {
+// ------------------------------------------------------------------
+void handleManualScreenOff() {
   static bool lastBtnState = HIGH;
   static bool waitingForRelease = false;
-  bool currentBtnState = digitalRead(BUTTON_BRIGHTNESS);
+  bool currentBtnState = digitalRead(BUTTON_SCREEN_OFF);
 
   if (lastBtnState == HIGH && currentBtnState == LOW) {
     waitingForRelease = true;
-    delay(20); 
+    delay(20); // Debounce
   }
 
+  // Only trigger on release, and ONLY if the screen is currently ON
   if (waitingForRelease && lastBtnState == LOW && currentBtnState == HIGH) {
-    // If the screen is currently dimmed (auto or manual), wake it up to 100%
-    if (isDimmed || isManuallyDimmed) {
-        resetActivityTimer(); 
-    } else {
-        // If it was already bright, manually dim it
-        ledcWrite(TFT_BL, BRIGHTNESS_DIM);
-        isManuallyDimmed = true;
-        isDimmed = true;
-        lastActivityTime = millis();
+    if (isScreenOn) {
+        // Turn screen completely OFF
+        digitalWrite(TFT_BL, LOW);
+        tft.writecommand(TFT_DISPOFF); 
+        isScreenOn = false;
     }
     waitingForRelease = false;
   }
@@ -323,25 +315,33 @@ void handleManualBrightnessToggle() {
 // ------------------------------------------------------------------
 
 
+// ------------------------------------------------------------------
 void adjustPB() {
   uint32_t pbGetValue = potPB.getValue(); 
   uint32_t pbGetRawValue = potPB.getRawValue(); 
   analog_t pbMapRawValue = map_PB(pbGetRawValue);
   
-  // --- FIX: Only define lastRaw ONCE ---
   static uint32_t lastRaw = 0;
 
-  // Detect movement to wake the screen
+  // Detect movement: Prevents Light Sleep AND Wakes the Screen
   if (abs((int)(pbGetRawValue - (int)lastRaw)) > 100) { 
-    if (isDimmed || isManuallyDimmed) {
-      resetActivityTimer(); // Restore 100% brightness
-    } else {
-      lastActivityTime = millis(); // Refresh the inactivity timer
+    resetActivityTimer(); 
+    
+    // --- NEW: Wake the screen if it was turned off ---
+    if (!isScreenOn) {
+      tft.writecommand(TFT_DISPON);
+      digitalWrite(TFT_BL, HIGH);
+      isScreenOn = true;
     }
+    // -------------------------------------------------
+
     lastRaw = pbGetRawValue;
   }
 
-  updateScreenPB(pbMapRawValue);
+  // Only waste processing power updating the screen if it's actually ON
+  if (isScreenOn) {
+    updateScreenPB(pbMapRawValue);
+  }
 
   if (pbGetValue == 0) { 
     Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)0); 
@@ -393,15 +393,7 @@ void handlePowerOrchestrator() {
     return; // Exit function after waking up
   }
 
-  // --- AUTOMATIC TIMERS ---
-  // Stage 1: Auto-Dim after 5 minutes
-  if (!isDimmed && !isManuallyDimmed && inactiveDuration > DIM_TIME && inactiveDuration < SLEEP_TIME) {
-    ledcWrite(TFT_BL, BRIGHTNESS_DIM); 
-    isDimmed = true;
-    Serial.println("Inactivity: Dimming Screen...");
-  }
-
-  // Stage 2: Auto-Sleep after 10 minutes
+  // --- AUTOMATIC SLEEP TIMER ---
   if (inactiveDuration > SLEEP_TIME) {
     
     // Check if Bluetooth is currently connected
@@ -410,12 +402,9 @@ void handlePowerOrchestrator() {
       enterLightSleep(); 
     } else {
       // We are connected! Intercept the sleep command.
-      // Set the timer back to just after the DIM_TIME threshold. 
-      // This prevents the screen from blazing back to 100% brightness, 
-      // but keeps the device fully awake and looping.
-      lastActivityTime = millis() - DIM_TIME - 1000; 
+      // Reset the timer to keep the device fully awake and looping.
+      lastActivityTime = millis(); 
     }
-    
   }
 }
 //=================================================================================
@@ -427,18 +416,16 @@ void setup() {
 
   pinMode(BATTERY_PIN, INPUT);
 
-  pinMode(BUTTON_BRIGHTNESS, INPUT_PULLUP);
+  pinMode(BUTTON_SCREEN_OFF, INPUT_PULLUP);
 
   // --- Screen setup on start/reboot ---
   tft.init();
   tft.setRotation(1); 
   tft.fillScreen(TFT_BLACK);
 
-  #ifdef TFT_BL
-  // In ESP32 Core 3.0+, ledcSetup is replaced by ledcAttach
-  // Syntax: ledcAttach(pin, frequency, resolution)
-  ledcAttach(TFT_BL, 5000, 8); 
-  ledcWrite(TFT_BL, BRIGHTNESS_FULL); // Use the PIN directly instead of a channel
+#ifdef TFT_BL
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH); 
   #endif
 
   lastActivityTime = millis(); // Initialize activity timer
@@ -480,11 +467,14 @@ void loop() {
 
   adjustPB(); 
 
-  updateScreenBattery(); 
-  updateScreenConnection();
+  // Only update battery and connection graphics if the screen is actually on
+  if (isScreenOn) {
+    updateScreenBattery(); 
+    updateScreenConnection();
+  }
+  
   handlePowerOrchestrator();
-  handleManualBrightnessToggle();
- 
+  handleManualScreenOff();
   //debugPrint(); 
 
   yield(); delay(5); 
