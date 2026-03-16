@@ -1,5 +1,4 @@
-//latest code with power saving features on//dont delete this code yet
-
+// 7MM_MIDI_EXAMPLE_JOSE_20260116
 // ron.nelson.ii@gmail.com
 // http://sevenmilemountain.etsy.com/
 
@@ -52,7 +51,7 @@ int channelShift = 0; // 0 based, so 0 = midi channel 1
 
 TFT_eSPI tft = TFT_eSPI(); 
 uint16_t lastDisplayedPB = 0xFFFF;
-
+uint16_t lastSentPBValue = 0xFFFF;
 //=================================================================================
 
 //Control_Surface output interfaces 
@@ -200,8 +199,8 @@ void updateScreenBattery() {
 
     //=================================================================================
     // Print to Serial for calibration
-    Serial.print("RAW BATTERY READING: ");
-    Serial.println(rawValue);
+    //Serial.print("RAW BATTERY READING: ");
+    //Serial.println(rawValue);
     //=================================================================================
 
     // Map your battery values (adjust the first 2 rawValues below based on your Serial findings)
@@ -328,8 +327,6 @@ void handleManualScreenOff() {
 }
 
 // ------------------------------------------------------------------
-
-
 // ------------------------------------------------------------------
 void adjustPB() {
   uint32_t pbGetValue = potPB.getValue(); 
@@ -338,45 +335,50 @@ void adjustPB() {
   
   static uint32_t lastRaw = 0;
 
-  // Detect movement: Prevents Light Sleep AND Wakes the Screen
+  // Detect movement to reset timers/wake screen
   if (abs((int)(pbGetRawValue - (int)lastRaw)) > 100) { 
     resetActivityTimer(); 
-    
-    // --- NEW: Wake the screen if it was turned off ---
     if (!isScreenOn) {
       tft.writecommand(TFT_DISPON);
       digitalWrite(TFT_BL, HIGH);
       isScreenOn = true;
     }
-    // -------------------------------------------------
-
     lastRaw = pbGetRawValue;
   }
 
-  // Only waste processing power updating the screen if it's actually ON
   if (isScreenOn) {
     updateScreenPB(pbMapRawValue);
   }
 
+  uint16_t valueToSend = pbMapRawValue;
+
+  // Handle your specific edge-case overrides
   if (pbGetValue == 0) { 
-    Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)0); 
+    valueToSend = 0;
+  } else if (pbGetValue == 8192) { 
+    valueToSend = 16383; 
   }
 
+  // Only send if the value has changed OR if we need to force a center update
+  if (valueToSend != lastSentPBValue) {
+      Control_Surface.sendPitchBend(Channel(channelShift), valueToSend);
+      lastSentPBValue = valueToSend;
+  }
+  
+  // Keep your existing Force Center Update logic for the deadzone
   if (pbMapRawValue == 8192 && PBwasOffCenter) {
     if ((millis() - PBlastCenteredOn) > FORCE_CENTER_UPDATE_DELAY) { 
       Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)8192);
       PBwasOffCenter = false;
       PBlastCenteredOn = millis();
+      lastSentPBValue = 8192;
+      Serial.println("[FORCE MIDI CENTER]"); 
     }
-  }
-
-  if (pbGetValue == 8192) { 
-    Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t) 16383); 
   }
 }
 
 //=================================================================================
-
+/*
 void debugPrint() {
   Serial.print("AR: ");
   Serial.print(analogRead(pinPB)); Serial.print("\t");
@@ -393,7 +395,7 @@ void debugPrint() {
   Serial.print(potPB.getRawValue());  Serial.print("\t");
   Serial.print(potPB.getValue()); Serial.print("\t");
   Serial.println();
-}
+}*/
 
 //=================================================================================
 //=================================================================================
@@ -428,7 +430,7 @@ void handlePowerOrchestrator() {
 void setup() {
 
   Serial.begin(SERIAL_BAUDRATE); 
-
+  delay(3000);
   pinMode(BATTERY_PIN, INPUT);
 
   pinMode(BUTTON_SCREEN_OFF, INPUT_PULLUP);
