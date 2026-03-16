@@ -30,6 +30,9 @@
 unsigned long lastBatteryUpdate = 0;
 int lastDisplayedBat = -1; // Force first draw
 
+int batterySampleCount = 0;
+long batteryRawSum = 0;
+
 // --- Screen Toggle variables ---
 #define BUTTON_SCREEN_OFF 35 // REMINDER: Pin 35 needs a physical pull-up resistor!
 bool isScreenOn = true;      // Tracks if the display is active
@@ -176,16 +179,24 @@ void enterLightSleep() {
 }
 
 //=================================================================================
+//=================================================================================
 void updateScreenBattery() {
+  // 1. Collect samples non-blockingly (one per call to the function)
+  if (batterySampleCount < 20) {
+    batteryRawSum += analogRead(BATTERY_PIN);
+    batterySampleCount++;
+    return; // Exit and return to the main loop to process MIDI
+  }
+
+  // 2. Once 20 samples are collected, check the 10-second timer
   if (millis() - lastBatteryUpdate > 10000 || lastDisplayedBat == -1) {
     lastBatteryUpdate = millis();
     
-    long rawSum = 0;
-    for (int i = 0; i < 20; i++) {
-      rawSum += analogRead(BATTERY_PIN);
-      delay(2); 
-    }
-    int rawValue = rawSum / 20; 
+    int rawValue = batteryRawSum / 20; 
+    
+    // Reset counters for the next 10-second cycle
+    batteryRawSum = 0;
+    batterySampleCount = 0;
 
     //=================================================================================
     // Print to Serial for calibration
@@ -222,6 +233,10 @@ void updateScreenBattery() {
 
     tft.setTextPadding(0); // Always reset padding after drawing
     lastDisplayedBat = batteryPct;
+  } else {
+    // If 10 seconds haven't passed, reset the sum/count to start a fresh batch next time
+    batteryRawSum = 0;
+    batterySampleCount = 0;
   }
 }
 
