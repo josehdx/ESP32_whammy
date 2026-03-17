@@ -98,14 +98,14 @@ void handlePowerOrchestrator() {
   if (digitalRead(BUTTON_SLEEP) == LOW) {
     while (digitalRead(BUTTON_SLEEP) == LOW) { delay(10); }
     Serial.println("Manual Command: Entering Light Sleep...");
-    enterLightSleep(); 
+    enterLightSleep();
     return;
   }
 
   if (inactiveDuration > SLEEP_TIME) {
     if (!btmidi.isConnected()) {
       Serial.println("Inactivity: Entering Light Sleep...");
-      enterLightSleep(); 
+      enterLightSleep();
     } else {
       lastActivityTime = millis();
     }
@@ -130,17 +130,13 @@ void systemTaskCode(void * parameter) {
     } else if (millis() - lastBatCheck > 10000 || sharedBatteryPct == -1) {
       lastBatCheck = millis();
       int rawValue = batteryRawSum / 20;
-      
-      // Serial.print("RAW BATTERY READING: ");
-      // Serial.println(rawValue);
-
       int pct = map(rawValue, 1750, 2480, 0, 100);
       sharedBatteryPct = constrain(pct, 0, 100);
       batteryRawSum = 0;
       batterySampleCount = 0;
     }
 
-    if (sharedScreenOn && !isWaking) { 
+    if (sharedScreenOn && !isWaking) {
       if (sharedBTConnected != localBT || forceBTUpdateState) {
         tft.setTextColor(sharedBTConnected ? TFT_GREEN : TFT_ORANGE, TFT_BLACK);
         tft.setTextDatum(TC_DATUM);
@@ -158,7 +154,7 @@ void systemTaskCode(void * parameter) {
         
         tft.setTextColor(TFT_CYAN, TFT_BLACK);
         tft.setTextDatum(TL_DATUM);
-        tft.setTextPadding(220); 
+        tft.setTextPadding(220);
         tft.drawString(pbStr, (tft.width() / 2) + 5, 50, 4);
         localPB = sharedPBValue;
         forceScreenUpdate = false;
@@ -167,12 +163,12 @@ void systemTaskCode(void * parameter) {
       if (sharedBatteryPct != localBat) {
         tft.setTextColor(sharedBatteryPct > 20 ? TFT_GREEN : TFT_RED, TFT_BLACK);
         tft.setTextDatum(TL_DATUM);
-        tft.setTextPadding(80); 
+        tft.setTextPadding(80);
         tft.drawString(String(sharedBatteryPct) + "%", (tft.width() / 2) + 5, 90, 4);
         localBat = sharedBatteryPct;
       }
     }
-    vTaskDelay(5 / portTICK_PERIOD_MS); 
+    vTaskDelay(5 / portTICK_PERIOD_MS);
   }
 }
 
@@ -195,14 +191,11 @@ analog_t map_PB(analog_t raw) {
 void calibrateCenterAndDeadzone() {
   Serial.println("Calibrating Center and Deadzones...");
   Serial.println("Please Wait...Do Not Touch Stick!");
-  
   int iNumberOfSamples = 1000;
   analog_t calibPBLow = 4095;
   analog_t calibPBHigh = 0;
   long lSampleSumPB = 0;
-  
   Serial.print("Sampling center. Number of samples: "); Serial.println(iNumberOfSamples);
-  
   pinMode(pinPB, INPUT);
   for (int iSample = 0; iSample < iNumberOfSamples; iSample++) {
     analog_t calibPB = analogRead(pinPB); delay(1);
@@ -210,19 +203,14 @@ void calibrateCenterAndDeadzone() {
     if (calibPB < calibPBLow) { calibPBLow=calibPB; }
     if (calibPB > calibPBHigh) { calibPBHigh=calibPB; }
   }
-  
   PBcenter = map((lSampleSumPB / iNumberOfSamples), 0, 4095, 0, 16383);
   Serial.print("PB Center: "); Serial.println(PBcenter);
-
   PBcenter = constrain(PBcenter, PBminimumValue, PBmaximumValue);
   analog_t calibPBLowMidi = map(calibPBLow, 0, 4095, 0, 16383);
   analog_t calibPBHighMidi = map(calibPBHigh, 0, 4095, 0, 16383);
-  
   Serial.print("PB Low MIDI: "); Serial.println(calibPBLowMidi);
   Serial.print("PB High MIDI: "); Serial.println(calibPBHighMidi);
-  
   PBdeadzone = constrain(((calibPBHighMidi - calibPBLowMidi) * PBdeadzoneMultiplier), PBdeadzoneMinimum, PBdeadzoneMaximum);
-  
   Serial.print("PB Deadzone: "); Serial.println((analog_t)((calibPBHighMidi - calibPBLowMidi) * PBdeadzoneMultiplier));
   Serial.print("PB Deadzone (Constrained/Value Used): "); Serial.println(PBdeadzone);
 }
@@ -231,7 +219,6 @@ void adjustPB() {
   uint32_t pbGetRawValue = potPB.getRawValue();
   analog_t pbMapRawValue = map_PB(pbGetRawValue);
   static uint16_t lastSentValue = 0xFFFF;
-  static uint32_t lastRaw = 0;
 
   sharedPBValue = pbMapRawValue;
   
@@ -239,11 +226,14 @@ void adjustPB() {
       forceScreenUpdate = true;
   }
 
-  if (abs((int)(pbGetRawValue - (int)lastRaw)) > 150) {
+  // --- NEW WAKE LOGIC: Only trigger on MIDI value change ---
+  if (pbMapRawValue != lastSentValue) {
     lastActivityTime = millis();
+    
+    // Safety check to wake screen only when MIDI value changes significantly
     if (!sharedScreenOn && !isWaking) {
       isWaking = true;
-      Serial.println("Movement Detected: Restoring Screen");
+      Serial.println("MIDI Change Detected: Restoring Screen");
       
       tft.writecommand(TFT_DISPON);
       delay(150); 
@@ -252,12 +242,9 @@ void adjustPB() {
       sharedScreenOn = true;
       isWaking = false;
     }
-    lastRaw = pbGetRawValue;
-  }
-
-  if (pbMapRawValue != lastSentValue) {
-      Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)pbMapRawValue);
-      lastSentValue = pbMapRawValue;
+    
+    Control_Surface.sendPitchBend(Channel(channelShift), (uint16_t)pbMapRawValue);
+    lastSentValue = pbMapRawValue;
   }
   
   if (pbMapRawValue == 8192 && PBwasOffCenter) {
@@ -319,18 +306,16 @@ void loop() {
   
   if (lastBtnState == HIGH && currentBtnState == LOW) {
     if (sharedScreenOn && !isWaking) {
-      Serial.println("Button: Turning Screen OFF"); 
+      Serial.println("Button: Turning Screen OFF");
       digitalWrite(TFT_BL, LOW);
-      delay(50); 
+      delay(50);
       tft.writecommand(TFT_DISPOFF);
       sharedScreenOn = false;
     }
-    delay(300); 
+    delay(300);
   }
   lastBtnState = currentBtnState;
 
-  // debugPrint();
-
-  yield(); 
-  delay(1); 
+  yield();
+  delay(1);
 }
